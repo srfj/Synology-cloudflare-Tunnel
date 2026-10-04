@@ -13,7 +13,7 @@ set -e
 PKG_NAME="cloudflared"
 PKG_VERSION="${PKG_VERSION:-2026.9.29}"
 # Synology package version (rev suffix lets DSM see it as an upgrade).
-SPK_VERSION="${SPK_VERSION:-${PKG_VERSION}-4}"
+SPK_VERSION="${SPK_VERSION:-${PKG_VERSION}-3}"
 GOARCH_TARGET="${GOARCH_TARGET:-amd64}"
 SPK_ARCH="${SPK_ARCH:-apollolake avoton braswell broadwell broadwellnk bromolow cedarview denverton grantley purley v1000 geminilake x86_64}"
 OUT_NAME="${OUT_NAME:-x86_64}"

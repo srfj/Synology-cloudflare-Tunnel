@@ -8,7 +8,6 @@
 package main
 
 import (
-	"crypto/tls"
 	_ "embed"
 	"encoding/json"
 	"flag"
@@ -204,157 +203,10 @@ func errString(err error) string {
 	return err.Error()
 }
 
-// dsmAuth validates a DSM session id against DSM's own web API, so the
-// management UI can only be used while the user is logged into DSM.
-//
-// The browser sends DSM's session cookie to this helper as well (cookies are
-// not scoped by port), which lets us ask DSM whether that session is still
-// logged in. Requests without a valid session are rejected with HTTP 401.
-type dsmAuth struct {
-	bases  []string
-	client *http.Client
-	mu     sync.Mutex
-	cache  map[string]authCacheEntry
-}
-
-type authCacheEntry struct {
-	ok  bool
-	exp time.Time
-}
-
-// dsmAuthProbes are login-required DSM web APIs, tried in order. A logged-in
-// session makes at least one of them succeed; error code 119 means the session
-// is invalid. Unknown-API codes (102/103) are skipped, so the list works
-// across DSM versions.
-var dsmAuthProbes = []string{
-	"api=SYNO.Core.CurrentUser&version=1&method=get",
-	"api=SYNO.FileStation.Info&version=2&method=get",
-	"api=SYNO.Core.Desktop.Initdata&version=1&method=get",
-}
-
-func newDSMAuth(extra string) *dsmAuth {
-	bases := make([]string, 0, 3)
-	if extra != "" {
-		bases = append(bases, strings.TrimRight(extra, "/"))
-	}
-	// DSM listens on 5000 (http) and 5001 (https) by default; try both so the
-	// check works whether the NAS is reachable over HTTP or HTTPS.
-	bases = append(bases, "http://127.0.0.1:5000", "https://127.0.0.1:5001")
-	return &dsmAuth{
-		bases: bases,
-		client: &http.Client{
-			Timeout:   5 * time.Second,
-			Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
-		},
-		cache: make(map[string]authCacheEntry),
-	}
-}
-
-func (a *dsmAuth) cached(sid string) (bool, bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if e, ok := a.cache[sid]; ok && time.Now().Before(e.exp) {
-		return e.ok, true
-	}
-	return false, false
-}
-
-func (a *dsmAuth) store(sid string, ok bool) {
-	ttl := 30 * time.Second
-	if !ok {
-		// Short negative cache: a fresh login gets a new session id anyway,
-		// but this keeps a logged-out client from hammering DSM.
-		ttl = 5 * time.Second
-	}
-	a.mu.Lock()
-	a.cache[sid] = authCacheEntry{ok: ok, exp: time.Now().Add(ttl)}
-	a.mu.Unlock()
-}
-
-// validate reports whether sid belongs to a logged-in DSM user. It returns an
-// error only when DSM itself cannot be reached, so callers can distinguish
-// "not logged in" (401) from "cannot verify" (503).
-func (a *dsmAuth) validate(sid string) (bool, error) {
-	if sid == "" {
-		return false, nil
-	}
-	if ok, hit := a.cached(sid); hit {
-		return ok, nil
-	}
-
-	reached := false
-	for _, base := range a.bases {
-		for _, probe := range dsmAuthProbes {
-			ok, known, err := a.probe(base, probe, sid)
-			if err != nil {
-				break // this base URL is unreachable; try the next one
-			}
-			reached = true
-			if !known {
-				continue // API not present on this DSM; try the next probe
-			}
-			if ok {
-				a.store(sid, true)
-				return true, nil
-			}
-		}
-		if reached {
-			break // DSM answered; the session is simply not logged in
-		}
-	}
-	if !reached {
-		return false, fmt.Errorf("DSM 未响应")
-	}
-	a.store(sid, false)
-	return false, nil
-}
-
-// probe calls a single DSM API. known is false when the API does not exist on
-// this DSM build (so the caller should try another probe).
-func (a *dsmAuth) probe(base, probe, sid string) (ok, known bool, err error) {
-	req, err := http.NewRequest(http.MethodGet, base+"/webapi/entry.cgi?"+probe, nil)
-	if err != nil {
-		return false, false, err
-	}
-	req.Header.Set("Cookie", "id="+sid)
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return false, false, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var out struct {
-		Success bool `json:"success"`
-		Error   *struct {
-			Code int `json:"code"`
-		} `json:"error"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&out); err != nil {
-		return false, false, err
-	}
-	if out.Success {
-		return true, true, nil
-	}
-	if out.Error != nil && (out.Error.Code == 102 || out.Error.Code == 103) {
-		return false, false, nil // API not found -> not conclusive
-	}
-	return false, true, nil // API exists but rejected the session
-}
-
-// sessionID extracts DSM's session id ("id" cookie) from the request.
-func sessionID(r *http.Request) string {
-	if c, err := r.Cookie("id"); err == nil {
-		return c.Value
-	}
-	return ""
-}
-
 func main() {
 	listen := flag.String("listen", "0.0.0.0:8321", "address to serve the management UI on")
 	binary := flag.String("binary", "", "path to the cloudflared binary")
 	vardir := flag.String("vardir", "", "writable package data directory")
-	dsmurl := flag.String("dsmurl", "", "DSM base URL used to verify the login session (default: auto, tries http://127.0.0.1:5000 and https://127.0.0.1:5001)")
-	noauth := flag.Bool("noauth", false, "disable DSM login check (NOT recommended)")
 	flag.Parse()
 
 	if *vardir == "" {
@@ -451,44 +303,19 @@ func main() {
 	mux.HandleFunc("/api/stop", action(s.stop))
 	mux.HandleFunc("/api/restart", action(s.restart))
 
-	// Gate every API call on a valid DSM login session. The page is served by
-	// DSM from /webman/3rdparty/cloudflared/, so the browser sends DSM's "id"
-	// cookie here too; we ask DSM to confirm it before doing anything.
-	auth := newDSMAuth(*dsmurl)
+	// Allow the page served by DSM (a different origin) to call this API.
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// CORS: echo the caller's origin (never "*") so credentialed requests
-		// are allowed when the page is served from the DSM origin.
-		if origin := r.Header.Get("Origin"); origin != "" {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Add("Vary", "Origin")
-		}
+		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-
-		if strings.HasPrefix(r.URL.Path, "/api/") && !*noauth {
-			ok, err := auth.validate(sessionID(r))
-			switch {
-			case err != nil:
-				writeJSON(w, http.StatusServiceUnavailable, map[string]string{
-					"error": "无法连接 DSM 校验登录状态: " + err.Error(),
-				})
-				return
-			case !ok:
-				writeJSON(w, http.StatusUnauthorized, map[string]string{
-					"error": "未登录 DSM 或登录已过期，请先登录 DSM 后再打开",
-				})
-				return
-			}
-		}
 		mux.ServeHTTP(w, r)
 	})
 
-	log.Printf("cfdctl listening on %s (version=%s, mode=%s, auth=%v)", *listen, s.version, s.mode(), !*noauth)
+	log.Printf("cfdctl listening on %s (version=%s, mode=%s)", *listen, s.version, s.mode())
 	if err := http.ListenAndServe(*listen, handler); err != nil {
 		log.Fatalf("listen: %v", err)
 	}
