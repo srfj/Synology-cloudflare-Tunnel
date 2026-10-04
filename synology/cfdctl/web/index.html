@@ -75,6 +75,26 @@
 // In case 1 the API lives on the helper port 8321; in case 2 it is same-origin.
 var API = (location.port === '8321') ? '' : ('http://' + location.hostname + ':8321');
 var warned = false;
+var redirecting = false;
+
+// Where to send a user who is not logged into DSM.
+function dsmLoginURL() {
+  if (location.port === '8321') {
+    var p = (location.protocol === 'https:') ? ':5001/' : ':5000/';
+    return location.protocol + '//' + location.hostname + p;
+  }
+  return location.origin + '/';
+}
+
+// The helper rejects calls without a valid DSM session (HTTP 401): the user is
+// not logged in, so send them to the DSM login page.
+function requireLogin() {
+  if (redirecting) { return; }
+  redirecting = true;
+  document.body.innerHTML = '<div class="wrap"><div class="card warn">' +
+    '尚未登录群晖 DSM，无法使用本管理界面。正在跳转到 DSM 登录页…</div></div>';
+  location.replace(dsmLoginURL());
+}
 
 function showWarn(html) {
   var el = document.getElementById('warn');
@@ -84,13 +104,23 @@ function showWarn(html) {
 }
 
 async function api(path, opts) {
+  opts = opts || {};
+  opts.credentials = 'include';
   try {
     var r = await fetch(API + path, opts);
     var t = await r.text();
-    try { return JSON.parse(t); } catch (e) { return { error: t }; }
+    var data;
+    try { data = JSON.parse(t); } catch (e) { data = { error: t }; }
+    if (r.status === 401) {
+      requireLogin();
+    } else if (r.status === 503 && !warned) {
+      showWarn('后台无法校验 DSM 登录状态：' + (data.error || '') +
+               '<br>请确认 DSM 的 HTTP(5000)/HTTPS(5001) 端口可访问。');
+    }
+    return data;
   } catch (e) {
     if (!warned) {
-      showWarn('无法连接后台服务（' + API + '）。请确认套件正在运行，并在 DSM 防火墙中放行 8321 端口；' +
+      showWarn('无法连接后台服务（' + API + '）。请确认套件正在运行；' +
                '也可以直接打开 <a href="' + API + '/" target="_blank">' + API + '/</a>。');
     }
     return { error: '无法连接后台服务' };
