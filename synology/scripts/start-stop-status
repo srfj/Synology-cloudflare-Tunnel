@@ -1,0 +1,100 @@
+#!/bin/sh
+# DSM start/stop/status handler for the cloudflared package.
+#
+# cloudflared reads its tunnel token from:
+#   $SYNOPKG_PKGVAR/tunnel-token   (single line token), or
+#   $SYNOPKG_PKGVAR/config.yml     (classic tunnel config file)
+# If neither exists the package simply does nothing when started.
+
+PKG_NAME="cloudflared"
+DEST_DIR="${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}"
+VAR_DIR="${SYNOPKG_PKGVAR:-/var/packages/${PKG_NAME}/var}"
+BIN="${DEST_DIR}/bin/cloudflared"
+PIDFILE="${VAR_DIR}/cloudflared.pid"
+LOGFILE="${VAR_DIR}/cloudflared.log"
+TOKENFILE="${VAR_DIR}/tunnel-token"
+CONFIGFILE="${VAR_DIR}/config.yml"
+
+is_running() {
+    [ -f "${PIDFILE}" ] || return 1
+    PID="$(cat "${PIDFILE}" 2>/dev/null)"
+    [ -n "${PID}" ] || return 1
+    kill -0 "${PID}" 2>/dev/null
+}
+
+start() {
+    if is_running; then
+        echo "cloudflared is already running (pid $(cat "${PIDFILE}"))"
+        return 0
+    fi
+
+    mkdir -p "${VAR_DIR}"
+
+    if [ -f "${TOKENFILE}" ] && [ -n "$(cat "${TOKENFILE}")" ]; then
+        set -- tunnel --no-autoupdate run --token "$(cat "${TOKENFILE}")"
+    elif [ -f "${CONFIGFILE}" ]; then
+        set -- tunnel --no-autoupdate --config "${CONFIGFILE}" run
+    else
+        echo "cloudflared is not configured yet."
+        echo "Create ${TOKENFILE} with your tunnel token,"
+        echo "or ${CONFIGFILE} with a tunnel config, then start the package again."
+        return 0
+    fi
+
+    echo "Starting cloudflared..."
+    nohup "${BIN}" "$@" >> "${LOGFILE}" 2>&1 &
+    echo $! > "${PIDFILE}"
+    sleep 1
+    if is_running; then
+        echo "cloudflared started (pid $(cat "${PIDFILE}"))"
+    else
+        echo "cloudflared failed to start; see ${LOGFILE}"
+        rm -f "${PIDFILE}"
+        return 1
+    fi
+}
+
+stop() {
+    if is_running; then
+        PID="$(cat "${PIDFILE}")"
+        echo "Stopping cloudflared (pid ${PID})..."
+        kill "${PID}" 2>/dev/null
+        i=0
+        while [ "${i}" -lt 10 ]; do
+            is_running || break
+            sleep 1
+            i=$((i + 1))
+        done
+        if is_running; then
+            kill -9 "${PID}" 2>/dev/null
+        fi
+    fi
+    rm -f "${PIDFILE}"
+    return 0
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart)
+        stop
+        start
+        ;;
+    status)
+        if is_running; then
+            exit 0
+        fi
+        # 3 = stopped per Synology package convention.
+        exit 3
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+
+exit $?

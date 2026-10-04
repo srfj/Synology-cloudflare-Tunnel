@@ -1,0 +1,33 @@
+#!/bin/sh
+# Runs after install and after upgrade on DSM 6.2.4.
+
+PKG_NAME="cloudflared"
+VAR_DIR="${SYNOPKG_PKGVAR:-/var/packages/${PKG_NAME}/var}"
+
+mkdir -p "${VAR_DIR}"
+
+cat > "${VAR_DIR}/README.txt" <<'EOF'
+cloudflared (Cloudflare Tunnel) - Synology DSM 6.2.4
+
+Binary:   /var/packages/cloudflared/target/bin/cloudflared
+Data dir: /var/packages/cloudflared/var
+
+Quick start (token-based tunnel):
+  1. In the Cloudflare Zero Trust dashboard, create a tunnel and copy its token.
+  2. echo '<YOUR-TUNNEL-TOKEN>' > /var/packages/cloudflared/var/tunnel-token
+  3. Start the package in Package Center (or: synopkg start cloudflared).
+
+Classic config.yml tunnel:
+  1. Put your config at /var/packages/cloudflared/var/config.yml
+  2. Start the package in Package Center.
+
+Manual run over SSH:
+  /var/packages/cloudflared/target/bin/cloudflared tunnel --no-autoupdate run --token '<TOKEN>'
+
+Logs:
+  /var/packages/cloudflared/var/cloudflared.log
+EOF
+
+echo "cloudflared binary installed to ${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}/bin/cloudflared"
+echo "See ${VAR_DIR}/README.txt for setup instructions."
+exit 0
