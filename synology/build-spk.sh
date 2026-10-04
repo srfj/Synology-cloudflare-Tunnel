@@ -13,7 +13,7 @@ set -e
 PKG_NAME="cloudflared"
 PKG_VERSION="${PKG_VERSION:-2026.9.29}"
 # Synology package version (rev suffix lets DSM see it as an upgrade).
-SPK_VERSION="${SPK_VERSION:-${PKG_VERSION}-4}"
+SPK_VERSION="${SPK_VERSION:-${PKG_VERSION}-5}"
 GOARCH_TARGET="${GOARCH_TARGET:-amd64}"
 SPK_ARCH="${SPK_ARCH:-apollolake avoton braswell broadwell broadwellnk bromolow cedarview denverton grantley purley v1000 geminilake x86_64}"
 OUT_NAME="${OUT_NAME:-x86_64}"
@@ -59,12 +59,13 @@ echo "==> Building cfdctl management helper"
 )
 chmod 755 "${STAGING_DIR}/bin/cfdctl"
 
-echo "==> Generating desktop icons"
+echo "==> Generating icons (desktop + Package Center)"
 (
     cd "${REPO_DIR}"
-    go run ./synology/gen-icons "${STAGING_DIR}/ui/images"
+    go run ./synology/gen-icons "${STAGING_DIR}/ui/images" "${SPK_ROOT}"
 )
 chmod 644 "${STAGING_DIR}/ui/images/"*.png
+chmod 644 "${SPK_ROOT}/PACKAGE_ICON.PNG" "${SPK_ROOT}/PACKAGE_ICON_256.PNG"
 
 echo "==> Copying DSM UI files"
 cp "${SCRIPT_DIR}/ui/config" "${STAGING_DIR}/ui/config"
@@ -111,7 +112,7 @@ chmod 644 "${SPK_ROOT}/INFO"
 
 echo "==> Assembling $(basename "${OUT_FILE}")"
 rm -f "${OUT_FILE}"
-( cd "${SPK_ROOT}" && tar -cf "${OUT_FILE}" INFO package.tgz scripts )
+( cd "${SPK_ROOT}" && tar -cf "${OUT_FILE}" INFO package.tgz scripts PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG )
 
 echo "==> Done"
 ls -lh "${OUT_FILE}"
