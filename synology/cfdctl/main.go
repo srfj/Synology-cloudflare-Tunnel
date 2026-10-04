@@ -8,6 +8,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	_ "embed"
 	"encoding/json"
 	"flag"
@@ -203,10 +204,57 @@ func errString(err error) string {
 	return err.Error()
 }
 
+// authStore holds the management login (user:password) that the helper checks
+// itself. DSM's own login is not involved: the credentials live in a plain file
+// and simply gate the /api/ endpoints, so the UI is reachable without a DSM
+// session.
+type authStore struct {
+	mu   sync.RWMutex
+	path string
+	user string
+	pass string
+}
+
+// loadAuth reads "username:password" from path. It falls back to admin/admin
+// when the file is missing or malformed so the UI is never left wide open by
+// accident.
+func loadAuth(path string) *authStore {
+	a := &authStore{path: path, user: "admin", pass: "admin"}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return a
+	}
+	line := strings.TrimSpace(string(b))
+	if i := strings.IndexByte(line, ':'); i > 0 {
+		a.user, a.pass = line[:i], line[i+1:]
+	}
+	return a
+}
+
+func (a *authStore) check(user, pass string) bool {
+	a.mu.RLock()
+	cu, cp := a.user, a.pass
+	a.mu.RUnlock()
+	return subtle.ConstantTimeCompare([]byte(user), []byte(cu)) == 1 &&
+		subtle.ConstantTimeCompare([]byte(pass), []byte(cp)) == 1
+}
+
+// set persists new credentials and updates the live values.
+func (a *authStore) set(user, pass string) error {
+	if err := os.WriteFile(a.path, []byte(user+":"+pass+"\n"), 0o600); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	a.user, a.pass = user, pass
+	a.mu.Unlock()
+	return nil
+}
+
 func main() {
 	listen := flag.String("listen", "0.0.0.0:8321", "address to serve the management UI on")
 	binary := flag.String("binary", "", "path to the cloudflared binary")
 	vardir := flag.String("vardir", "", "writable package data directory")
+	authfile := flag.String("authfile", "", "file containing the management login as user:password")
 	flag.Parse()
 
 	if *vardir == "" {
@@ -222,6 +270,10 @@ func main() {
 		*binary = "/var/packages/cloudflared/target/bin/cloudflared"
 	}
 	_ = os.MkdirAll(*vardir, 0o755)
+	if *authfile == "" {
+		*authfile = filepath.Join(*vardir, "auth")
+	}
+	auth := loadAuth(*authfile)
 
 	s := &supervisor{
 		binary:     *binary,
@@ -302,21 +354,66 @@ func main() {
 	mux.HandleFunc("/api/start", action(s.start))
 	mux.HandleFunc("/api/stop", action(s.stop))
 	mux.HandleFunc("/api/restart", action(s.restart))
+	mux.HandleFunc("/api/account", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+			return
+		}
+		var in struct {
+			User string `json:"user"`
+			Pass string `json:"pass"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&in); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "请求格式错误"})
+			return
+		}
+		in.User = strings.TrimSpace(in.User)
+		in.Pass = strings.TrimSpace(in.Pass)
+		if in.User == "" || in.Pass == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "账号和密码不能为空"})
+			return
+		}
+		if strings.ContainsAny(in.User, ":") {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "账号不能包含冒号"})
+			return
+		}
+		if err := auth.set(in.User, in.Pass); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+	})
 
-	// Allow the page served by DSM (a different origin) to call this API.
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// The static page is public (it only contains the login form); everything
+	// under /api/ requires the management login. The credentials are checked by
+	// this helper, so no DSM session is needed.
+	secured := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Allow the page served by DSM (a different origin, on port 5000) to call
+		// this API on port 8321. The preflight must be answered before the auth
+		// check, otherwise the browser never sends the real request.
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Max-Age", "600")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if !strings.HasPrefix(r.URL.Path, "/api/") {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		u, p, ok := r.BasicAuth()
+		if !ok || !auth.check(u, p) {
+			w.Header().Set("WWW-Authenticate", `Basic realm="Cloudflare Tunnel", charset="UTF-8"`)
+			http.Error(w, "需要登录", http.StatusUnauthorized)
 			return
 		}
 		mux.ServeHTTP(w, r)
 	})
 
 	log.Printf("cfdctl listening on %s (version=%s, mode=%s)", *listen, s.version, s.mode())
-	if err := http.ListenAndServe(*listen, handler); err != nil {
+	if err := http.ListenAndServe(*listen, secured); err != nil {
 		log.Fatalf("listen: %v", err)
 	}
 }

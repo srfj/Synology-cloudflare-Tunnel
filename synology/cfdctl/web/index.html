@@ -19,8 +19,10 @@
   .dot.off { background: #dc2626; box-shadow: 0 0 0 4px rgba(220,38,38,.12); }
   .state { font-weight: 600; }
   .meta { margin-top: 10px; color: #6b7280; font-size: 13px; line-height: 1.7; }
-  textarea { width: 100%; min-height: 88px; padding: 10px; border: 1px solid #d1d5db; border-radius: 8px;
+  input, textarea { width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; }
+  textarea { min-height: 88px;
              font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; resize: vertical; }
+  label { display: block; font-size: 13px; color: #6b7280; margin: 10px 0 4px; }
   button { border: 0; border-radius: 8px; padding: 9px 16px; font-size: 14px; cursor: pointer; }
   .primary { background: #f6821f; color: #fff; }
   .ghost { background: #eef0f3; color: #1f2328; }
@@ -31,50 +33,97 @@
   .ok { color: #16a34a; } .err { color: #dc2626; }
   .warn { border-color: #f0c36d !important; background: #fff8e6 !important; color: #8a5a00; font-size: 13px; line-height: 1.7; }
   a { color: #f6821f; }
+  #login { max-width: 360px; margin: 8vh auto 0; }
+  #login .sub { margin-bottom: 12px; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Cloudflare Tunnel</h1>
-  <div class="sub" id="version">cloudflared</div>
 
-  <div class="card warn" id="warn" style="display:none"></div>
-
-  <div class="card">
-    <div class="row">
-      <span class="dot" id="dot"></span>
-      <span class="state" id="state">读取中…</span>
-      <span style="flex:1"></span>
-      <button class="ghost" onclick="act('start')">启动</button>
-      <button class="ghost" onclick="act('stop')">停止</button>
-      <button class="ghost" onclick="act('restart')">重启</button>
+  <div id="login" style="display:none">
+    <div class="card">
+      <h1>Cloudflare Tunnel</h1>
+      <div class="sub">请输入管理账号和密码</div>
+      <label>账号</label>
+      <input id="login-user" autocomplete="username">
+      <label>密码</label>
+      <input id="login-pass" type="password" autocomplete="current-password">
+      <div class="row" style="margin-top:14px">
+        <button class="primary" onclick="doLogin()">登录</button>
+        <span class="toast err" id="login-err"></span>
+      </div>
+      <div class="meta">默认账号 admin / admin，登录后可在“账号设置”里修改。</div>
     </div>
-    <div class="meta" id="meta"></div>
   </div>
 
-  <div class="card">
-    <div class="row" style="margin-bottom:10px"><strong>Tunnel Token</strong></div>
-    <textarea id="token" placeholder="粘贴 Cloudflare Zero Trust 里创建的隧道 Token"></textarea>
-    <div class="row" style="margin-top:10px">
-      <button class="primary" onclick="saveToken()">保存并启动</button>
-      <span class="toast" id="toast"></span>
+  <div id="main" style="display:none">
+    <h1>Cloudflare Tunnel</h1>
+    <div class="sub" id="version">cloudflared</div>
+
+    <div class="card warn" id="warn" style="display:none"></div>
+
+    <div class="card">
+      <div class="row">
+        <span class="dot" id="dot"></span>
+        <span class="state" id="state">读取中…</span>
+        <span style="flex:1"></span>
+        <button class="ghost" onclick="act('start')">启动</button>
+        <button class="ghost" onclick="act('stop')">停止</button>
+        <button class="ghost" onclick="act('restart')">重启</button>
+      </div>
+      <div class="meta" id="meta"></div>
     </div>
-    <div class="meta">Token 只保存在本机：/var/packages/cloudflared/var/tunnel-token</div>
+
+    <div class="card">
+      <div class="row" style="margin-bottom:10px"><strong>Tunnel Token</strong></div>
+      <textarea id="token" placeholder="粘贴 Cloudflare Zero Trust 里创建的隧道 Token"></textarea>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" onclick="saveToken()">保存并启动</button>
+        <span class="toast" id="toast"></span>
+      </div>
+      <div class="meta">Token 只保存在本机：/var/packages/cloudflared/var/tunnel-token</div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="margin-bottom:10px"><strong>运行日志</strong><span style="flex:1"></span>
+        <button class="ghost" onclick="loadLog()">刷新</button></div>
+      <pre id="log">加载中…</pre>
+    </div>
+
+    <div class="card">
+      <div class="row" style="margin-bottom:10px"><strong>账号设置</strong></div>
+      <label>新账号</label>
+      <input id="acct-user" autocomplete="off">
+      <label>新密码</label>
+      <input id="acct-pass" type="password" autocomplete="new-password">
+      <div class="row" style="margin-top:10px">
+        <button class="ghost" onclick="saveAccount()">保存账号</button>
+        <button class="ghost" onclick="logout()">退出登录</button>
+        <span class="toast" id="acct-toast"></span>
+      </div>
+    </div>
   </div>
 
-  <div class="card">
-    <div class="row" style="margin-bottom:10px"><strong>运行日志</strong><span style="flex:1"></span>
-      <button class="ghost" onclick="loadLog()">刷新</button></div>
-    <pre id="log">加载中…</pre>
-  </div>
 </div>
 <script>
-// The page can be served from two places:
-//   1. DSM itself:  http://<nas>:5000/webman/3rdparty/cloudflared/index.html  (address bar stays clean)
-//   2. The helper : http://<nas>:8321/
-// In case 1 the API lives on the helper port 8321; in case 2 it is same-origin.
-var API = (location.port === '8321') ? '' : ('http://' + location.hostname + ':8321');
+// The management page may be served by DSM (port 5000) while the helper listens
+// on 8321, so the API lives on the same host but a fixed port. When the page is
+// opened directly on 8321 the API is same-origin. The 8321 port is therefore
+// used silently by the page and never appears in the address bar.
+function apiBase() {
+  var p = location.port || (location.protocol === 'https:' ? '443' : '80');
+  if (p === '8321') return location.protocol + '//' + location.host;
+  return location.protocol + '//' + location.hostname + ':8321';
+}
+var API = apiBase();
+var creds = null;
 var warned = false;
+
+function b64(s) { return btoa(unescape(encodeURIComponent(s))); }
+
+function authHeaders() {
+  return creds ? { 'Authorization': 'Basic ' + b64(creds.user + ':' + creds.pass) } : {};
+}
 
 function showWarn(html) {
   var el = document.getElementById('warn');
@@ -84,14 +133,16 @@ function showWarn(html) {
 }
 
 async function api(path, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({}, opts.headers, authHeaders());
   try {
     var r = await fetch(API + path, opts);
+    if (r.status === 401) { needLogin(); return { error: '未登录' }; }
     var t = await r.text();
     try { return JSON.parse(t); } catch (e) { return { error: t }; }
   } catch (e) {
     if (!warned) {
-      showWarn('无法连接后台服务（' + API + '）。请确认套件正在运行，并在 DSM 防火墙中放行 8321 端口；' +
-               '也可以直接打开 <a href="' + API + '/" target="_blank">' + API + '/</a>。');
+      showWarn('无法连接后台服务，请确认套件正在运行，且本页是通过 http:// 访问的。');
     }
     return { error: '无法连接后台服务' };
   }
@@ -103,13 +154,60 @@ function toast(msg, ok) {
   setTimeout(function () { el.textContent = ''; }, 4000);
 }
 
-async function refresh() {
+function showMain() {
+  document.getElementById('login').style.display = 'none';
+  document.getElementById('main').style.display = 'block';
+  var u = creds ? creds.user : '';
+  document.getElementById('acct-user').value = u;
+}
+
+function needLogin() {
+  creds = null;
+  document.getElementById('main').style.display = 'none';
+  document.getElementById('login').style.display = 'block';
+}
+
+async function doLogin() {
+  var u = document.getElementById('login-user').value.trim();
+  var p = document.getElementById('login-pass').value;
+  var err = document.getElementById('login-err');
+  if (!u || !p) { err.textContent = '请输入账号和密码'; return; }
+  creds = { user: u, pass: p };
   var s = await api('/api/status');
-  if (s.error) { return; }
+  if (s && s.error) {
+    creds = null;
+    err.textContent = '账号或密码错误，或后台未运行';
+    return;
+  }
+  err.textContent = '';
+  localStorage.setItem('cf_user', u);
+  document.getElementById('login-pass').value = '';
+  showMain();
+  renderStatus(s);
+  loadLog();
+}
+
+function logout() {
+  creds = null;
+  localStorage.removeItem('cf_user');
+  document.getElementById('login-user').value = '';
+  document.getElementById('login-pass').value = '';
+  needLogin();
+}
+
+function renderStatus(s) {
+  if (!s || s.error) return;
   document.getElementById('dot').className = 'dot ' + (s.running ? 'on' : 'off');
   document.getElementById('state').textContent = s.message || '';
   document.getElementById('meta').textContent =
     '模式: ' + s.mode + '   PID: ' + (s.pid || '-') + '   ' + (s.version || '');
+  document.getElementById('version').textContent = s.version || 'cloudflared';
+}
+
+async function refresh() {
+  var s = await api('/api/status');
+  renderStatus(s);
+  return s;
 }
 
 async function act(name) {
@@ -133,9 +231,35 @@ async function loadLog() {
   el.scrollTop = el.scrollHeight;
 }
 
-refresh(); loadLog();
-setInterval(refresh, 5000);
-setInterval(loadLog, 5000);
+async function saveAccount() {
+  var u = document.getElementById('acct-user').value.trim();
+  var p = document.getElementById('acct-pass').value;
+  var el = document.getElementById('acct-toast');
+  if (!u || !p) { el.textContent = '账号和密码不能为空'; el.className = 'toast err'; return; }
+  var r = await api('/api/account', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user: u, pass: p })
+  });
+  if (r.ok) {
+    creds = { user: u, pass: p };
+    localStorage.setItem('cf_user', u);
+    document.getElementById('acct-pass').value = '';
+    el.textContent = '已保存，请牢记新账号密码'; el.className = 'toast ok';
+  } else {
+    el.textContent = r.error || '保存失败'; el.className = 'toast err';
+  }
+}
+
+(function init() {
+  // Only the username is remembered; the password is always asked for again.
+  document.getElementById('login-user').value = localStorage.getItem('cf_user') || '';
+  needLogin();
+})();
+
+setInterval(function () {
+  if (creds) { refresh(); loadLog(); }
+}, 5000);
 </script>
 </body>
 </html>
