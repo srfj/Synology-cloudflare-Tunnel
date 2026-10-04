@@ -4,8 +4,8 @@
       "type": "url",
       "icon": "images/icon_{0}.png",
       "title": "Cloudflare Tunnel",
-      "desc": "配置并管理 Cloudflare Tunnel（不含 NanoPi）",
-      "url": "3rdparty/cloudflared/index.html",
+      "desc": "配置并管理 Cloudflare Tunnel（不带自定义端口）",
+      "url": "webman/3rdparty/cloudflared/index.html",
       "allUsers": true
     }
   }

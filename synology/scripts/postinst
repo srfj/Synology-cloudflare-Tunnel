@@ -2,16 +2,18 @@
 # Runs after install and after upgrade on DSM 6.2.4.
 
 PKG_NAME="cloudflared"
-PORT="8321"
 VAR_DIR="${SYNOPKG_PKGVAR:-/var/packages/${PKG_NAME}/var}"
+# Web page served by DSM itself (no custom port needed).
+UI_URL="webman/3rdparty/cloudflared/index.html"
 
 mkdir -p "${VAR_DIR}"
 
 cat > "${VAR_DIR}/README.txt" <<EOF
 cloudflared (Cloudflare Tunnel) - Synology DSM 6.2.4
 
-管理界面:   http://<NAS-IP>:${PORT}/
-说明:       也可以在 DSM 主菜单/桌面点击 "Cloudflare Tunnel" 图标打开。
+管理界面:   http://<NAS-IP>:5000/${UI_URL}
+说明:       直接点击 DSM 桌面/主菜单里的 "Cloudflare Tunnel" 图标即可打开，
+            地址栏就是普通的 DSM 网址，不需要带自定义端口。
 
 文件位置:
   binary   : ${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}/bin/cloudflared
@@ -29,6 +31,6 @@ cloudflared (Cloudflare Tunnel) - Synology DSM 6.2.4
 EOF
 
 echo "cloudflared installed."
-echo "Open the management UI at http://<NAS-IP>:${PORT}/ or click the DSM desktop icon."
+echo "Open the management UI from the DSM desktop icon, or at http://<NAS-IP>:5000/${UI_URL}"
 echo "See ${VAR_DIR}/README.txt for details."
 exit 0

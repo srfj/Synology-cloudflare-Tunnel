@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cloudflare Tunnel</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+         background: #f5f6f8; color: #1f2328; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #6b7280; font-size: 13px; margin-bottom: 20px; }
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; margin-bottom: 16px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #9ca3af; flex: none; }
+  .dot.on { background: #16a34a; box-shadow: 0 0 0 4px rgba(22,163,74,.15); }
+  .dot.off { background: #dc2626; box-shadow: 0 0 0 4px rgba(220,38,38,.12); }
+  .state { font-weight: 600; }
+  .meta { margin-top: 10px; color: #6b7280; font-size: 13px; line-height: 1.7; }
+  textarea { width: 100%; min-height: 88px; padding: 10px; border: 1px solid #d1d5db; border-radius: 8px;
+             font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; resize: vertical; }
+  button { border: 0; border-radius: 8px; padding: 9px 16px; font-size: 14px; cursor: pointer; }
+  .primary { background: #f6821f; color: #fff; }
+  .ghost { background: #eef0f3; color: #1f2328; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  pre { background: #0b1020; color: #d7e0ff; padding: 12px; border-radius: 8px; overflow: auto;
+        max-height: 320px; font-size: 12px; line-height: 1.55; margin: 0; white-space: pre-wrap; word-break: break-all; }
+  .toast { margin-top: 10px; font-size: 13px; min-height: 18px; }
+  .ok { color: #16a34a; } .err { color: #dc2626; }
+  .warn { border-color: #f0c36d !important; background: #fff8e6 !important; color: #8a5a00; font-size: 13px; line-height: 1.7; }
+  a { color: #f6821f; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Cloudflare Tunnel</h1>
+  <div class="sub" id="version">cloudflared</div>
+
+  <div class="card warn" id="warn" style="display:none"></div>
+
+  <div class="card">
+    <div class="row">
+      <span class="dot" id="dot"></span>
+      <span class="state" id="state">读取中…</span>
+      <span style="flex:1"></span>
+      <button class="ghost" onclick="act('start')">启动</button>
+      <button class="ghost" onclick="act('stop')">停止</button>
+      <button class="ghost" onclick="act('restart')">重启</button>
+    </div>
+    <div class="meta" id="meta"></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:10px"><strong>Tunnel Token</strong></div>
+    <textarea id="token" placeholder="粘贴 Cloudflare Zero Trust 里创建的隧道 Token"></textarea>
+    <div class="row" style="margin-top:10px">
+      <button class="primary" onclick="saveToken()">保存并启动</button>
+      <span class="toast" id="toast"></span>
+    </div>
+    <div class="meta">Token 只保存在本机：/var/packages/cloudflared/var/tunnel-token</div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:10px"><strong>运行日志</strong><span style="flex:1"></span>
+      <button class="ghost" onclick="loadLog()">刷新</button></div>
+    <pre id="log">加载中…</pre>
+  </div>
+</div>
+<script>
+// The page can be served from two places:
+//   1. DSM itself:  http://<nas>:5000/webman/3rdparty/cloudflared/index.html  (address bar stays clean)
+//   2. The helper : http://<nas>:8321/
+// In case 1 the API lives on the helper port 8321; in case 2 it is same-origin.
+var API = (location.port === '8321') ? '' : ('http://' + location.hostname + ':8321');
+var warned = false;
+
+function showWarn(html) {
+  var el = document.getElementById('warn');
+  el.innerHTML = html;
+  el.style.display = 'block';
+  warned = true;
+}
+
+async function api(path, opts) {
+  try {
+    var r = await fetch(API + path, opts);
+    var t = await r.text();
+    try { return JSON.parse(t); } catch (e) { return { error: t }; }
+  } catch (e) {
+    if (!warned) {
+      showWarn('无法连接后台服务（' + API + '）。请确认套件正在运行，并在 DSM 防火墙中放行 8321 端口；' +
+               '也可以直接打开 <a href="' + API + '/" target="_blank">' + API + '/</a>。');
+    }
+    return { error: '无法连接后台服务' };
+  }
+}
+
+function toast(msg, ok) {
+  var el = document.getElementById('toast');
+  el.textContent = msg; el.className = 'toast ' + (ok ? 'ok' : 'err');
+  setTimeout(function () { el.textContent = ''; }, 4000);
+}
+
+async function refresh() {
+  var s = await api('/api/status');
+  if (s.error) { return; }
+  document.getElementById('dot').className = 'dot ' + (s.running ? 'on' : 'off');
+  document.getElementById('state').textContent = s.message || '';
+  document.getElementById('meta').textContent =
+    '模式: ' + s.mode + '   PID: ' + (s.pid || '-') + '   ' + (s.version || '');
+}
+
+async function act(name) {
+  var r = await api('/api/' + name, { method: 'POST' });
+  toast(r.ok ? '操作成功' : (r.error || '操作失败'), r.ok);
+  refresh();
+}
+
+async function saveToken() {
+  var v = document.getElementById('token').value.trim();
+  if (!v) { toast('Token 不能为空', false); return; }
+  var r = await api('/api/token', { method: 'POST', body: v });
+  toast(r.ok ? '已保存并启动' : (r.error || '失败'), r.ok);
+  refresh();
+}
+
+async function loadLog() {
+  var r = await api('/api/log?lines=200');
+  var el = document.getElementById('log');
+  el.textContent = r.log || '(暂无日志)';
+  el.scrollTop = el.scrollHeight;
+}
+
+refresh(); loadLog();
+setInterval(refresh, 5000);
+setInterval(loadLog, 5000);
+</script>
+</body>
+</html>

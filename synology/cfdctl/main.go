@@ -8,6 +8,7 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -25,6 +26,9 @@ import (
 	"time"
 )
 
+//go:embed web/index.html
+var indexHTML string
+
 type supervisor struct {
 	mu         sync.Mutex
 	binary     string
@@ -36,7 +40,7 @@ type supervisor struct {
 	version    string
 }
 
-// configured returns the arguments used to launch cloudflared, or an error
+// tunnelArgs returns the arguments used to launch cloudflared, or an error
 // when neither a tunnel token nor a config file is available.
 func (s *supervisor) tunnelArgs() ([]string, error) {
 	if b, err := os.ReadFile(s.tokenPath); err == nil {
@@ -188,9 +192,15 @@ func tail(path string, lines int) string {
 
 func writeJSON(w http.ResponseWriter, code int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func main() {
@@ -293,126 +303,20 @@ func main() {
 	mux.HandleFunc("/api/stop", action(s.stop))
 	mux.HandleFunc("/api/restart", action(s.restart))
 
+	// Allow the page served by DSM (a different origin) to call this API.
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+
 	log.Printf("cfdctl listening on %s (version=%s, mode=%s)", *listen, s.version, s.mode())
-	if err := http.ListenAndServe(*listen, mux); err != nil {
+	if err := http.ListenAndServe(*listen, handler); err != nil {
 		log.Fatalf("listen: %v", err)
 	}
 }
-
-func errString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
-}
-
-const indexHTML = `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cloudflare Tunnel</title>
-<style>
-  :root { color-scheme: light dark; }
-  * { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-         background: #f5f6f8; color: #1f2328; }
-  .wrap { max-width: 720px; margin: 0 auto; padding: 24px 16px 48px; }
-  h1 { font-size: 20px; margin: 0 0 4px; }
-  .sub { color: #6b7280; font-size: 13px; margin-bottom: 20px; }
-  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; margin-bottom: 16px; }
-  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .dot { width: 10px; height: 10px; border-radius: 50%; background: #9ca3af; flex: none; }
-  .dot.on { background: #16a34a; box-shadow: 0 0 0 4px rgba(22,163,74,.15); }
-  .dot.off { background: #dc2626; box-shadow: 0 0 0 4px rgba(220,38,38,.12); }
-  .state { font-weight: 600; }
-  .meta { margin-top: 10px; color: #6b7280; font-size: 13px; line-height: 1.7; }
-  textarea { width: 100%; min-height: 88px; padding: 10px; border: 1px solid #d1d5db; border-radius: 8px;
-             font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; resize: vertical; }
-  button { border: 0; border-radius: 8px; padding: 9px 16px; font-size: 14px; cursor: pointer; }
-  .primary { background: #f6821f; color: #fff; }
-  .ghost { background: #eef0f3; color: #1f2328; }
-  button:disabled { opacity: .5; cursor: not-allowed; }
-  pre { background: #0b1020; color: #d7e0ff; padding: 12px; border-radius: 8px; overflow: auto;
-        max-height: 320px; font-size: 12px; line-height: 1.55; margin: 0; }
-  .toast { margin-top: 10px; font-size: 13px; min-height: 18px; }
-  .ok { color: #16a34a; } .err { color: #dc2626; }
-</style>
-</head>
-<body>
-<div class="wrap">
-  <h1>Cloudflare Tunnel</h1>
-  <div class="sub" id="version">cloudflared</div>
-
-  <div class="card">
-    <div class="row">
-      <span class="dot" id="dot"></span>
-      <span class="state" id="state">读取中…</span>
-      <span style="flex:1"></span>
-      <button class="ghost" onclick="act('start')">启动</button>
-      <button class="ghost" onclick="act('stop')">停止</button>
-      <button class="ghost" onclick="act('restart')">重启</button>
-    </div>
-    <div class="meta" id="meta"></div>
-  </div>
-
-  <div class="card">
-    <div class="row" style="margin-bottom:10px"><strong>Tunnel Token</strong></div>
-    <textarea id="token" placeholder="粘贴 Cloudflare Zero Trust 里创建的隧道 Token"></textarea>
-    <div class="row" style="margin-top:10px">
-      <button class="primary" onclick="saveToken()">保存并启动</button>
-      <span class="toast" id="toast"></span>
-    </div>
-    <div class="meta">Token 只保存在本机：/var/packages/cloudflared/var/tunnel-token</div>
-  </div>
-
-  <div class="card">
-    <div class="row" style="margin-bottom:10px"><strong>运行日志</strong><span style="flex:1"></span>
-      <button class="ghost" onclick="loadLog()">刷新</button></div>
-    <pre id="log">加载中…</pre>
-  </div>
-</div>
-<script>
-async function api(path, opts) {
-  const r = await fetch(path, opts);
-  const t = await r.text();
-  try { return JSON.parse(t); } catch (e) { return { error: t }; }
-}
-function toast(msg, ok) {
-  const el = document.getElementById('toast');
-  el.textContent = msg; el.className = 'toast ' + (ok ? 'ok' : 'err');
-  setTimeout(() => { el.textContent = ''; }, 4000);
-}
-async function refresh() {
-  const s = await api('/api/status');
-  const dot = document.getElementById('dot');
-  dot.className = 'dot ' + (s.running ? 'on' : 'off');
-  document.getElementById('state').textContent = s.message || '';
-  document.getElementById('meta').textContent =
-    '模式: ' + s.mode + '   PID: ' + (s.pid || '-') + '   ' + (s.version || '');
-}
-async function act(name) {
-  const r = await api('/api/' + name, { method: 'POST' });
-  toast(r.ok ? '操作成功' : (r.error || '操作失败'), r.ok);
-  refresh();
-}
-async function saveToken() {
-  const v = document.getElementById('token').value.trim();
-  if (!v) { toast('Token 不能为空', false); return; }
-  const r = await api('/api/token', { method: 'POST', body: v });
-  toast(r.ok ? '已保存并启动' : (r.error || '失败'), r.ok);
-  refresh();
-}
-async function loadLog() {
-  const r = await api('/api/log?lines=200');
-  const el = document.getElementById('log');
-  el.textContent = r.log || '(暂无日志)';
-  el.scrollTop = el.scrollHeight;
-}
-refresh(); loadLog();
-setInterval(refresh, 5000);
-setInterval(loadLog, 5000);
-</script>
-</body>
-</html>
-`

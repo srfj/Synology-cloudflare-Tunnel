@@ -37,7 +37,7 @@ start() {
     sleep 1
     if ctl_running; then
         echo "cloudflared manager started (pid $(cat "${CTL_PIDFILE}"))"
-        echo "Management UI: http://<NAS-IP>:${PORT}/"
+        echo "Management UI: http://<NAS-IP>:5000/webman/3rdparty/cloudflared/index.html"
         return 0
     fi
     echo "cloudflared manager failed to start; see ${VAR_DIR}/cfdctl.log"

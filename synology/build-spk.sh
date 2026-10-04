@@ -13,12 +13,20 @@ set -e
 PKG_NAME="cloudflared"
 PKG_VERSION="${PKG_VERSION:-2026.9.29}"
 # Synology package version (rev suffix lets DSM see it as an upgrade).
-SPK_VERSION="${SPK_VERSION:-${PKG_VERSION}-2}"
+SPK_VERSION="${SPK_VERSION:-${PKG_VERSION}-3}"
 GOARCH_TARGET="${GOARCH_TARGET:-amd64}"
 SPK_ARCH="${SPK_ARCH:-apollolake avoton braswell broadwell broadwellnk bromolow cedarview denverton grantley purley v1000 geminilake x86_64}"
 OUT_NAME="${OUT_NAME:-x86_64}"
 OS_MIN_VER="${OS_MIN_VER:-6.2-00000}"
-ADMIN_PORT="${ADMIN_PORT:-8321}"
+# DSM web port used to build the Package Center "打开" link, so the UI opens at
+# the normal DSM address (http://<nas>:5000/webman/3rdparty/cloudflared/...) and
+# not on a custom port. Change it if your DSM HTTP port is not 5000.
+ADMIN_PORT="${ADMIN_PORT:-5000}"
+# Path (relative to the DSM web root) of the management page. DSM combines these
+# into: <adminprotocol>://<ip>:<adminport>/<adminurl>. dsmuidir symlinks
+# target/ui to /usr/syno/synoman/webman/3rdparty/cloudflared, which is served
+# under the /webman/ prefix.
+ADMIN_URL="${ADMIN_URL:-webman/3rdparty/cloudflared/index.html}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -60,7 +68,7 @@ chmod 644 "${STAGING_DIR}/ui/images/"*.png
 
 echo "==> Copying DSM UI files"
 cp "${SCRIPT_DIR}/ui/config" "${STAGING_DIR}/ui/config"
-cp "${SCRIPT_DIR}/ui/index.html" "${STAGING_DIR}/ui/index.html"
+cp "${SCRIPT_DIR}/cfdctl/web/index.html" "${STAGING_DIR}/ui/index.html"
 chmod 644 "${STAGING_DIR}/ui/config" "${STAGING_DIR}/ui/index.html"
 
 echo "==> Creating package.tgz"
@@ -96,7 +104,7 @@ dsmuidir="ui"
 dsmappname="com.cloudflare.cloudflared"
 adminprotocol="http"
 adminport="${ADMIN_PORT}"
-adminurl=""
+adminurl="${ADMIN_URL}"
 checksum="${CHECKSUM}"
 EOF
 chmod 644 "${SPK_ROOT}/INFO"
