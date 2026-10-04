@@ -18,20 +18,11 @@
   .dot.on { background: #16a34a; box-shadow: 0 0 0 4px rgba(22,163,74,.15); }
   .dot.off { background: #dc2626; box-shadow: 0 0 0 4px rgba(220,38,38,.12); }
   .state { font-weight: 600; }
-  .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #eef0f3; color: #4b5563; }
-  .badge.on { background: #e7f6ec; color: #15803d; }
-  .badge.off { background: #fdecec; color: #b91c1c; }
   .meta { margin-top: 10px; color: #6b7280; font-size: 13px; line-height: 1.7; }
-  textarea { width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px;
-             min-height: 76px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; resize: vertical; }
-  button { border: 0; border-radius: 8px; padding: 9px 16px; font-size: 14px; cursor: pointer; }
-  .primary { background: #f6821f; color: #fff; }
-  .ghost { background: #eef0f3; color: #1f2328; }
-  button:disabled { opacity: .5; cursor: not-allowed; }
+  button { border: 0; border-radius: 8px; padding: 9px 16px; font-size: 14px; cursor: pointer;
+           background: #eef0f3; color: #1f2328; }
   pre { background: #0b1020; color: #d7e0ff; padding: 12px; border-radius: 8px; overflow: auto;
-        max-height: 320px; font-size: 12px; line-height: 1.55; margin: 0; white-space: pre-wrap; word-break: break-all; }
-  .toast { margin-top: 10px; font-size: 13px; min-height: 18px; }
-  .ok { color: #16a34a; } .err { color: #dc2626; }
+        max-height: 420px; font-size: 12px; line-height: 1.55; margin: 0; white-space: pre-wrap; word-break: break-all; }
   .warn { border-color: #f0c36d !important; background: #fff8e6 !important; color: #8a5a00; font-size: 13px; line-height: 1.7; }
 </style>
 </head>
@@ -46,29 +37,13 @@
     <div class="row">
       <span class="dot" id="dot"></span>
       <span class="state" id="state">读取中…</span>
-      <span style="flex:1"></span>
-      <button class="ghost" onclick="act('start')">启动</button>
-      <button class="ghost" onclick="act('stop')">停止</button>
-      <button class="ghost" onclick="act('restart')">重启</button>
     </div>
     <div class="meta" id="meta"></div>
   </div>
 
   <div class="card">
-    <div class="row" style="margin-bottom:10px"><strong>Tunnel Token</strong>
-      <span style="flex:1"></span><span class="badge" id="token-state">读取中…</span></div>
-    <div class="meta">Token 在套件安装时设置，出于安全考虑页面只显示状态、不显示明文（日志里出现的 Token 也会被自动打码）。</div>
-    <label style="display:block;font-size:13px;color:#6b7280;margin:12px 0 4px">更换 Token（可选，仅在需要时填写，保存后会重启隧道）</label>
-    <textarea id="token" placeholder="粘贴新的 Tunnel Token，留空则不改动"></textarea>
-    <div class="row" style="margin-top:10px">
-      <button class="primary" onclick="saveToken()">更新并重启</button>
-      <span class="toast" id="toast"></span>
-    </div>
-  </div>
-
-  <div class="card">
     <div class="row" style="margin-bottom:10px"><strong>运行日志</strong><span style="flex:1"></span>
-      <button class="ghost" onclick="loadLog()">刷新</button></div>
+      <button onclick="loadLog()">刷新</button></div>
     <pre id="log">加载中…</pre>
   </div>
 </div>
@@ -92,10 +67,9 @@ function showWarn(html) {
   warned = true;
 }
 
-async function api(path, opts) {
-  opts = opts || {};
+async function api(path) {
   try {
-    var r = await fetch(API + path, opts);
+    var r = await fetch(API + path);
     var t = await r.text();
     try { return JSON.parse(t); } catch (e) { return { error: t }; }
   } catch (e) {
@@ -106,12 +80,6 @@ async function api(path, opts) {
   }
 }
 
-function toast(msg, ok) {
-  var el = document.getElementById('toast');
-  el.textContent = msg; el.className = 'toast ' + (ok ? 'ok' : 'err');
-  setTimeout(function () { el.textContent = ''; }, 4000);
-}
-
 function renderStatus(s) {
   if (!s || s.error) return;
   document.getElementById('dot').className = 'dot ' + (s.running ? 'on' : 'off');
@@ -119,39 +87,10 @@ function renderStatus(s) {
   document.getElementById('meta').textContent =
     '模式: ' + s.mode + '   PID: ' + (s.pid || '-') + (s.version ? '   ' + s.version : '');
   document.getElementById('version').textContent = s.version || 'cloudflared';
-
-  var ts = document.getElementById('token-state');
-  if (s.mode === 'token') {
-    ts.textContent = '已配置 ' + (s.token_masked || '');
-    ts.className = 'badge on';
-  } else if (s.mode === 'config') {
-    ts.textContent = '使用 config.yml';
-    ts.className = 'badge on';
-  } else {
-    ts.textContent = '未配置';
-    ts.className = 'badge off';
-  }
 }
 
 async function refresh() {
-  var s = await api('/api/status');
-  renderStatus(s);
-  return s;
-}
-
-async function act(name) {
-  var r = await api('/api/' + name, { method: 'POST' });
-  toast(r.ok ? '操作成功' : (r.error || '操作失败'), r.ok);
-  refresh();
-}
-
-async function saveToken() {
-  var v = document.getElementById('token').value.trim();
-  if (!v) { toast('请输入新的 Token，或直接关闭本页', false); return; }
-  var r = await api('/api/token', { method: 'POST', body: v });
-  toast(r.ok ? '已更新并重启' : (r.error || '失败'), r.ok);
-  document.getElementById('token').value = '';
-  refresh();
+  renderStatus(await api('/api/status'));
 }
 
 async function loadLog() {
