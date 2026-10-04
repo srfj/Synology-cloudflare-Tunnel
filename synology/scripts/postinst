@@ -2,32 +2,33 @@
 # Runs after install and after upgrade on DSM 6.2.4.
 
 PKG_NAME="cloudflared"
+PORT="8321"
 VAR_DIR="${SYNOPKG_PKGVAR:-/var/packages/${PKG_NAME}/var}"
 
 mkdir -p "${VAR_DIR}"
 
-cat > "${VAR_DIR}/README.txt" <<'EOF'
+cat > "${VAR_DIR}/README.txt" <<EOF
 cloudflared (Cloudflare Tunnel) - Synology DSM 6.2.4
 
-Binary:   /var/packages/cloudflared/target/bin/cloudflared
-Data dir: /var/packages/cloudflared/var
+管理界面:   http://<NAS-IP>:${PORT}/
+说明:       也可以在 DSM 主菜单/桌面点击 "Cloudflare Tunnel" 图标打开。
 
-Quick start (token-based tunnel):
-  1. In the Cloudflare Zero Trust dashboard, create a tunnel and copy its token.
-  2. echo '<YOUR-TUNNEL-TOKEN>' > /var/packages/cloudflared/var/tunnel-token
-  3. Start the package in Package Center (or: synopkg start cloudflared).
+文件位置:
+  binary   : ${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}/bin/cloudflared
+  数据目录 : ${VAR_DIR}
+  Token    : ${VAR_DIR}/tunnel-token
+  config   : ${VAR_DIR}/config.yml
+  日志     : ${VAR_DIR}/cloudflared.log
 
-Classic config.yml tunnel:
-  1. Put your config at /var/packages/cloudflared/var/config.yml
-  2. Start the package in Package Center.
+配置方式（二选一）:
+  A. 打开管理界面，把 Cloudflare Zero Trust 里创建隧道得到的 Token 粘贴进去，点“保存并启动”。
+  B. SSH 执行: echo '<YOUR-TUNNEL-TOKEN>' > ${VAR_DIR}/tunnel-token && synopkg restart ${PKG_NAME}
 
-Manual run over SSH:
-  /var/packages/cloudflared/target/bin/cloudflared tunnel --no-autoupdate run --token '<TOKEN>'
-
-Logs:
-  /var/packages/cloudflared/var/cloudflared.log
+命令行手动运行:
+  ${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}/bin/cloudflared tunnel --no-autoupdate run --token '<TOKEN>'
 EOF
 
-echo "cloudflared binary installed to ${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}/bin/cloudflared"
-echo "See ${VAR_DIR}/README.txt for setup instructions."
+echo "cloudflared installed."
+echo "Open the management UI at http://<NAS-IP>:${PORT}/ or click the DSM desktop icon."
+echo "See ${VAR_DIR}/README.txt for details."
 exit 0

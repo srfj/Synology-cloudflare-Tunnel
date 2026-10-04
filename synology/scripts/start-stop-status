@@ -1,75 +1,76 @@
 #!/bin/sh
 # DSM start/stop/status handler for the cloudflared package.
 #
-# cloudflared reads its tunnel token from:
-#   $SYNOPKG_PKGVAR/tunnel-token   (single line token), or
-#   $SYNOPKG_PKGVAR/config.yml     (classic tunnel config file)
-# If neither exists the package simply does nothing when started.
+# It launches cfdctl, the small supervisor shipped in bin/cfdctl. cfdctl
+# serves the management UI on PORT and starts/stops the cloudflared tunnel
+# itself, depending on whether a token or config file is present. Keeping the
+# supervisor always running is what makes the Package Center "打开" button and
+# the DSM desktop shortcut work.
 
 PKG_NAME="cloudflared"
+PORT="8321"
 DEST_DIR="${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}"
 VAR_DIR="${SYNOPKG_PKGVAR:-/var/packages/${PKG_NAME}/var}"
+CTL="${DEST_DIR}/bin/cfdctl"
 BIN="${DEST_DIR}/bin/cloudflared"
-PIDFILE="${VAR_DIR}/cloudflared.pid"
-LOGFILE="${VAR_DIR}/cloudflared.log"
-TOKENFILE="${VAR_DIR}/tunnel-token"
-CONFIGFILE="${VAR_DIR}/config.yml"
+CTL_PIDFILE="${VAR_DIR}/cfdctl.pid"
+TUNNEL_PIDFILE="${VAR_DIR}/cloudflared.pid"
 
-is_running() {
-    [ -f "${PIDFILE}" ] || return 1
-    PID="$(cat "${PIDFILE}" 2>/dev/null)"
+ctl_running() {
+    [ -f "${CTL_PIDFILE}" ] || return 1
+    PID="$(cat "${CTL_PIDFILE}" 2>/dev/null)"
     [ -n "${PID}" ] || return 1
     kill -0 "${PID}" 2>/dev/null
 }
 
 start() {
-    if is_running; then
-        echo "cloudflared is already running (pid $(cat "${PIDFILE}"))"
+    if ctl_running; then
+        echo "cloudflared manager is already running (pid $(cat "${CTL_PIDFILE}"))"
         return 0
     fi
 
     mkdir -p "${VAR_DIR}"
-
-    if [ -f "${TOKENFILE}" ] && [ -n "$(cat "${TOKENFILE}")" ]; then
-        set -- tunnel --no-autoupdate run --token "$(cat "${TOKENFILE}")"
-    elif [ -f "${CONFIGFILE}" ]; then
-        set -- tunnel --no-autoupdate --config "${CONFIGFILE}" run
-    else
-        echo "cloudflared is not configured yet."
-        echo "Create ${TOKENFILE} with your tunnel token,"
-        echo "or ${CONFIGFILE} with a tunnel config, then start the package again."
+    echo "Starting cloudflared manager on port ${PORT}..."
+    nohup "${CTL}" -listen "0.0.0.0:${PORT}" -binary "${BIN}" -vardir "${VAR_DIR}" \
+        >> "${VAR_DIR}/cfdctl.log" 2>&1 &
+    echo $! > "${CTL_PIDFILE}"
+    sleep 1
+    if ctl_running; then
+        echo "cloudflared manager started (pid $(cat "${CTL_PIDFILE}"))"
+        echo "Management UI: http://<NAS-IP>:${PORT}/"
         return 0
     fi
-
-    echo "Starting cloudflared..."
-    nohup "${BIN}" "$@" >> "${LOGFILE}" 2>&1 &
-    echo $! > "${PIDFILE}"
-    sleep 1
-    if is_running; then
-        echo "cloudflared started (pid $(cat "${PIDFILE}"))"
-    else
-        echo "cloudflared failed to start; see ${LOGFILE}"
-        rm -f "${PIDFILE}"
-        return 1
-    fi
+    echo "cloudflared manager failed to start; see ${VAR_DIR}/cfdctl.log"
+    rm -f "${CTL_PIDFILE}"
+    return 1
 }
 
 stop() {
-    if is_running; then
-        PID="$(cat "${PIDFILE}")"
-        echo "Stopping cloudflared (pid ${PID})..."
+    if ctl_running; then
+        PID="$(cat "${CTL_PIDFILE}")"
+        echo "Stopping cloudflared manager (pid ${PID})..."
+        # cfdctl stops the tunnel child on SIGTERM and removes its own pidfile.
         kill "${PID}" 2>/dev/null
         i=0
-        while [ "${i}" -lt 10 ]; do
-            is_running || break
+        while [ "${i}" -lt 15 ]; do
+            ctl_running || break
             sleep 1
             i=$((i + 1))
         done
-        if is_running; then
+        if ctl_running; then
             kill -9 "${PID}" 2>/dev/null
         fi
     fi
-    rm -f "${PIDFILE}"
+    rm -f "${CTL_PIDFILE}"
+
+    # Safety net: clean up any orphaned tunnel process.
+    if [ -f "${TUNNEL_PIDFILE}" ]; then
+        TPID="$(cat "${TUNNEL_PIDFILE}" 2>/dev/null)"
+        if [ -n "${TPID}" ]; then
+            kill "${TPID}" 2>/dev/null
+        fi
+        rm -f "${TUNNEL_PIDFILE}"
+    fi
     return 0
 }
 
@@ -85,7 +86,7 @@ case "$1" in
         start
         ;;
     status)
-        if is_running; then
+        if ctl_running; then
             exit 0
         fi
         # 3 = stopped per Synology package convention.

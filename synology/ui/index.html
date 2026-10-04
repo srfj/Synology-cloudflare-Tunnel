@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cloudflare Tunnel</title>
+<script>
+  // The desktop shortcut is served by DSM's own web server (which may be on
+  // HTTPS); the management UI is served by cfdctl on port 8321 over HTTP.
+  (function () {
+    var target = 'http://' + location.hostname + ':8321/';
+    location.replace(target);
+    window.addEventListener('DOMContentLoaded', function () {
+      var a = document.getElementById('fallback');
+      a.href = target;
+      a.textContent = target;
+    });
+  })();
+</script>
+</head>
+<body style="font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;padding:24px">
+  <p>正在打开 Cloudflare Tunnel 管理界面…</p>
+  <p>如果没有自动跳转，请手动访问 <a id="fallback" href="#">管理界面</a>。</p>
+</body>
+</html>
