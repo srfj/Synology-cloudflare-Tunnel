@@ -13,7 +13,7 @@ set -e
 PKG_NAME="cloudflared"
 PKG_VERSION="${PKG_VERSION:-2026.9.29}"
 # Synology package version (rev suffix lets DSM see it as an upgrade).
-SPK_VERSION="${SPK_VERSION:-${PKG_VERSION}-5}"
+SPK_VERSION="${SPK_VERSION:-${PKG_VERSION}-6}"
 GOARCH_TARGET="${GOARCH_TARGET:-amd64}"
 SPK_ARCH="${SPK_ARCH:-apollolake avoton braswell broadwell broadwellnk bromolow cedarview denverton grantley purley v1000 geminilake x86_64}"
 OUT_NAME="${OUT_NAME:-x86_64}"
@@ -84,6 +84,16 @@ for f in preinst postinst preuninst postuninst start-stop-status; do
     fi
 done
 
+echo "==> Copying install wizard (token prompt)"
+mkdir -p "${SPK_ROOT}/WIZARD_UIFILES"
+if [ -d "${SCRIPT_DIR}/wizard" ]; then
+    for f in "${SCRIPT_DIR}"/wizard/*; do
+        [ -f "${f}" ] || continue
+        cp "${f}" "${SPK_ROOT}/WIZARD_UIFILES/$(basename "${f}")"
+    done
+fi
+chmod 644 "${SPK_ROOT}/WIZARD_UIFILES/"*
+
 echo "==> Writing INFO"
 CHECKSUM="$(md5sum "${SPK_ROOT}/package.tgz" | cut -d' ' -f1)"
 cat > "${SPK_ROOT}/INFO" <<EOF
@@ -112,7 +122,7 @@ chmod 644 "${SPK_ROOT}/INFO"
 
 echo "==> Assembling $(basename "${OUT_FILE}")"
 rm -f "${OUT_FILE}"
-( cd "${SPK_ROOT}" && tar -cf "${OUT_FILE}" INFO package.tgz scripts PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG )
+( cd "${SPK_ROOT}" && tar -cf "${OUT_FILE}" INFO package.tgz scripts WIZARD_UIFILES PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG )
 
 echo "==> Done"
 ls -lh "${OUT_FILE}"

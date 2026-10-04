@@ -8,12 +8,12 @@ UI_URL="webman/3rdparty/cloudflared/index.html"
 
 mkdir -p "${VAR_DIR}"
 
-# Management login, independent of the DSM account. Format: user:password.
-# Created once with a default; change it from the UI ("账号设置") or by editing
-# this file, then restart the package.
-if [ ! -f "${VAR_DIR}/auth" ]; then
-    printf 'admin:admin\n' > "${VAR_DIR}/auth"
-    chmod 600 "${VAR_DIR}/auth"
+# Tunnel Token entered in the DSM install wizard. On a fresh install it is
+# required; on upgrade the wizard is skipped (silent_upgrade="yes"), so only
+# write when a value was actually provided and otherwise keep the existing one.
+if [ -n "${WIZARD_TOKEN}" ]; then
+    printf '%s' "${WIZARD_TOKEN}" > "${VAR_DIR}/tunnel-token"
+    chmod 600 "${VAR_DIR}/tunnel-token"
 fi
 
 cat > "${VAR_DIR}/README.txt" <<EOF
@@ -22,21 +22,22 @@ cloudflared (Cloudflare Tunnel) - Synology DSM 6.2.4
 管理界面:   http://<NAS-IP>:5000/${UI_URL}
 说明:       直接点击 DSM 桌面/主菜单里的 "Cloudflare Tunnel" 图标即可打开，
             地址栏就是普通的 DSM 网址，不需要带自定义端口。
-管理登录:   默认账号 admin / 密码 admin（与 DSM 账号无关），
-            登录后可在页面“账号设置”里修改。也可直接编辑文件:
-  ${VAR_DIR}/auth   (格式 user:password)
+            页面显示隧道运行状态和运行日志，无需登录。
+Token:      安装套件时在向导里填写，安装完成后隧道会自动启动。
+            页面出于安全考虑不显示 Token 明文，日志中的 Token 也会自动打码。
+            如需更换 Token，可在页面的“更换 Token”里粘贴新值。
 
 文件位置:
   binary   : ${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}/bin/cloudflared
   数据目录 : ${VAR_DIR}
-  登录账号 : ${VAR_DIR}/auth
   Token    : ${VAR_DIR}/tunnel-token
   config   : ${VAR_DIR}/config.yml
   日志     : ${VAR_DIR}/cloudflared.log
 
-配置方式（二选一）:
-  A. 打开管理界面，把 Cloudflare Zero Trust 里创建隧道得到的 Token 粘贴进去，点“保存并启动”。
-  B. SSH 执行: echo '<YOUR-TUNNEL-TOKEN>' > ${VAR_DIR}/tunnel-token && synopkg restart ${PKG_NAME}
+配置方式:
+  A. 安装时在 DSM 向导中填写 Tunnel Token（推荐）。
+  B. 打开管理界面，在“更换 Token”里粘贴新的 Token 并保存。
+  C. SSH 执行: printf '%s' '<YOUR-TUNNEL-TOKEN>' > ${VAR_DIR}/tunnel-token && synopkg restart ${PKG_NAME}
 
 命令行手动运行:
   ${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}/bin/cloudflared tunnel --no-autoupdate run --token '<TOKEN>'
