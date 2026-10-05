@@ -36,6 +36,15 @@ Downloads are available as standalone binaries, a Docker image, and Debian, RPM,
 User documentation for Cloudflare Tunnel can be found at https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/
 
 
+## Synology DSM package
+
+This repository also builds a native Synology DSM 6.2.4 package (`.spk`) that bundles `cloudflared` with a small
+read-only status page, so the tunnel can be installed and monitored from DSM Package Center without any command line.
+The Tunnel Token is entered in the DSM install wizard, the tunnel starts automatically after installation, and the
+token is kept out of the process list and masked in the UI and logs. Build and usage instructions are in
+[`synology/README.md`](synology/README.md).
+
+
 ## Creating Tunnels and routing traffic
 
 Once installed, you can authenticate `cloudflared` into your Cloudflare account and begin creating Tunnels to serve traffic to your origins.
