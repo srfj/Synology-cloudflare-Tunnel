@@ -1,0 +1,23 @@
+[
+  {
+    "step_title": "Cloudflare Tunnel 配置",
+    "items": [
+      {
+        "type": "textfield",
+        "desc": "请粘贴 Cloudflare Zero Trust（Networks > Tunnels）中为这台 NAS 创建的隧道 Token。此项为必填，安装完成后隧道会自动启动。",
+        "subitems": [
+          {
+            "key": "WIZARD_TOKEN",
+            "desc": "Tunnel Token",
+            "emptyText": "eyJhIjoi...（在此粘贴隧道 Token）",
+            "validator": {
+              "allowBlank": false,
+              "minLength": 20,
+              "maxLength": 4096
+            }
+          }
+        ]
+      }
+    ]
+  }
+]

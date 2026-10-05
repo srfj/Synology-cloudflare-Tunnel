@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cloudflare Tunnel</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+         background: #f5f6f8; color: #1f2328; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #6b7280; font-size: 13px; margin-bottom: 20px; }
+  .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; margin-bottom: 16px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #9ca3af; flex: none; }
+  .dot.on { background: #16a34a; box-shadow: 0 0 0 4px rgba(22,163,74,.15); }
+  .dot.off { background: #dc2626; box-shadow: 0 0 0 4px rgba(220,38,38,.12); }
+  .state { font-weight: 600; }
+  .meta { margin-top: 10px; color: #6b7280; font-size: 13px; line-height: 1.7; }
+  button { border: 0; border-radius: 8px; padding: 9px 16px; font-size: 14px; cursor: pointer;
+           background: #eef0f3; color: #1f2328; }
+  pre { background: #0b1020; color: #d7e0ff; padding: 12px; border-radius: 8px; overflow: auto;
+        max-height: 420px; font-size: 12px; line-height: 1.55; margin: 0; white-space: pre-wrap; word-break: break-all; }
+  .warn { border-color: #f0c36d !important; background: #fff8e6 !important; color: #8a5a00; font-size: 13px; line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Cloudflare Tunnel</h1>
+  <div class="sub" id="version">cloudflared</div>
+
+  <div class="card warn" id="warn" style="display:none"></div>
+
+  <div class="card">
+    <div class="row">
+      <span class="dot" id="dot"></span>
+      <span class="state" id="state">读取中…</span>
+    </div>
+    <div class="meta" id="meta"></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:10px"><strong>运行日志</strong><span style="flex:1"></span>
+      <button onclick="loadLog()">刷新</button></div>
+    <pre id="log">加载中…</pre>
+  </div>
+</div>
+<script>
+// The management page may be served by DSM (port 5000) while the helper listens
+// on 8321, so the API lives on the same host but a fixed port. When the page is
+// opened directly on 8321 the API is same-origin. The 8321 port is therefore
+// used silently by the page and never appears in the address bar.
+function apiBase() {
+  var p = location.port || (location.protocol === 'https:' ? '443' : '80');
+  if (p === '8321') return location.protocol + '//' + location.host;
+  return location.protocol + '//' + location.hostname + ':8321';
+}
+var API = apiBase();
+var warned = false;
+
+function showWarn(html) {
+  var el = document.getElementById('warn');
+  el.innerHTML = html;
+  el.style.display = 'block';
+  warned = true;
+}
+
+async function api(path) {
+  try {
+    var r = await fetch(API + path);
+    var t = await r.text();
+    try { return JSON.parse(t); } catch (e) { return { error: t }; }
+  } catch (e) {
+    if (!warned) {
+      showWarn('无法连接后台服务，请确认套件正在运行，且本页是通过 http:// 访问的。');
+    }
+    return { error: '无法连接后台服务' };
+  }
+}
+
+function renderStatus(s) {
+  if (!s || s.error) return;
+  document.getElementById('dot').className = 'dot ' + (s.running ? 'on' : 'off');
+  document.getElementById('state').textContent = s.message || '';
+  document.getElementById('meta').textContent =
+    '模式: ' + s.mode + '   PID: ' + (s.pid || '-') + (s.version ? '   ' + s.version : '');
+  document.getElementById('version').textContent = s.version || 'cloudflared';
+}
+
+async function refresh() {
+  renderStatus(await api('/api/status'));
+}
+
+async function loadLog() {
+  var r = await api('/api/log?lines=200');
+  var el = document.getElementById('log');
+  el.textContent = r.log || '(暂无日志)';
+  el.scrollTop = el.scrollHeight;
+}
+
+(function init() {
+  refresh();
+  loadLog();
+})();
+
+setInterval(function () {
+  refresh();
+  loadLog();
+}, 5000);
+</script>
+</body>
+</html>

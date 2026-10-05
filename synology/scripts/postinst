@@ -1,0 +1,49 @@
+#!/bin/sh
+# Runs after install and after upgrade on DSM 6.2.4.
+
+PKG_NAME="cloudflared"
+VAR_DIR="${SYNOPKG_PKGVAR:-/var/packages/${PKG_NAME}/var}"
+# Web page served by DSM itself (no custom port needed).
+UI_URL="webman/3rdparty/cloudflared/index.html"
+
+mkdir -p "${VAR_DIR}"
+
+# Tunnel Token entered in the DSM install wizard. On a fresh install it is
+# required; on upgrade the wizard is skipped (silent_upgrade="yes"), so only
+# write when a value was actually provided and otherwise keep the existing one.
+if [ -n "${WIZARD_TOKEN}" ]; then
+    printf '%s' "${WIZARD_TOKEN}" > "${VAR_DIR}/tunnel-token"
+    chmod 600 "${VAR_DIR}/tunnel-token"
+fi
+
+cat > "${VAR_DIR}/README.txt" <<EOF
+cloudflared (Cloudflare Tunnel) - Synology DSM 6.2.4
+
+管理界面:   http://<NAS-IP>:5000/${UI_URL}
+说明:       直接点击 DSM 桌面/主菜单里的 "Cloudflare Tunnel" 图标即可打开，
+            地址栏就是普通的 DSM 网址，不需要带自定义端口。
+            页面显示隧道运行状态和运行日志，无需登录。
+Token:      安装套件时在向导里填写，安装完成后隧道会自动启动。
+            页面出于安全考虑不显示 Token 明文，日志中的 Token 也会自动打码。
+            如需更换 Token，可在页面的“更换 Token”里粘贴新值。
+
+文件位置:
+  binary   : ${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}/bin/cloudflared
+  数据目录 : ${VAR_DIR}
+  Token    : ${VAR_DIR}/tunnel-token
+  config   : ${VAR_DIR}/config.yml
+  日志     : ${VAR_DIR}/cloudflared.log
+
+配置方式:
+  A. 安装时在 DSM 向导中填写 Tunnel Token（推荐）。
+  B. 打开管理界面，在“更换 Token”里粘贴新的 Token 并保存。
+  C. SSH 执行: printf '%s' '<YOUR-TUNNEL-TOKEN>' > ${VAR_DIR}/tunnel-token && synopkg restart ${PKG_NAME}
+
+命令行手动运行:
+  ${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}/bin/cloudflared tunnel --no-autoupdate run --token '<TOKEN>'
+EOF
+
+echo "cloudflared installed."
+echo "Open the management UI from the DSM desktop icon, or at http://<NAS-IP>:5000/${UI_URL}"
+echo "See ${VAR_DIR}/README.txt for details."
+exit 0

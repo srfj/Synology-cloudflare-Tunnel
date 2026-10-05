@@ -1,0 +1,23 @@
+[
+  {
+    "step_title": "Cloudflare Tunnel configuration",
+    "items": [
+      {
+        "type": "textfield",
+        "desc": "Paste the Tunnel Token from Cloudflare Zero Trust (Networks > Tunnels). This field is required: the tunnel is started automatically right after installation.",
+        "subitems": [
+          {
+            "key": "WIZARD_TOKEN",
+            "desc": "Tunnel Token",
+            "emptyText": "eyJhIjoi... (paste the tunnel token here)",
+            "validator": {
+              "allowBlank": false,
+              "minLength": 20,
+              "maxLength": 4096
+            }
+          }
+        ]
+      }
+    ]
+  }
+]
