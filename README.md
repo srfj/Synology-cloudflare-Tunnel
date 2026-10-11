@@ -17,6 +17,7 @@
 - **Cloudflare 官方图标**：桌面图标与套件中心图标均使用官方云标。
 - **地址栏不带自定义端口**：点击图标走 DSM 原生路径 `/webman/3rdparty/cloudflared/index.html`，
   管理服务实际监听的 8321 端口由页面在后台静默调用，不出现在地址栏。
+- **连接诊断与加速**：状态页展示实际传输协议与边缘连接，可切换自动 / QUIC / HTTP/2，以及 IPv4/IPv6、HA 连接数、禁用 QUIC PMTU。
 
 ## 快速开始
 
@@ -49,7 +50,7 @@ GOARCH_TARGET=arm64 OUT_NAME=armv8 SPK_ARCH="rtd1296 armv8" \
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `PKG_VERSION` | `2026.9.29` | 显示版本 |
-| `SPK_VERSION` | `${PKG_VERSION}-7` | 套件版本，末尾修订号递增可让 DSM 识别为升级 |
+| `SPK_VERSION` | `${PKG_VERSION}-8` | 套件版本，末尾修订号递增可让 DSM 识别为升级 |
 | `GOARCH_TARGET` | `amd64` | Go 目标架构 |
 | `SPK_ARCH` | x86_64 机型列表 | INFO 中的 `arch` |
 | `OUT_NAME` | `x86_64` | 产物文件名中的架构标识 |
@@ -66,6 +67,7 @@ GOARCH_TARGET=arm64 OUT_NAME=armv8 SPK_ARCH="rtd1296 armv8" \
   ```
 
   或重新安装套件并在向导中填入新 Token。
+- **连接加速**：状态页「连接加速」可选自动、低延迟（QUIC）、稳定优先（HTTP/2）。公开域名网页元素慢时，先看诊断提示：若已从 QUIC 回退或 UDP 7844 被拦，改用 HTTP/2；当前已是 QUIC 仍慢时，可强制 IPv4 或禁用 QUIC PMTU。设置写入 `var/accel.json`，保存后重启隧道生效。
 - **使用 config.yml**：把配置文件放到 `/var/packages/cloudflared/var/config.yml`，
   管理助手在无 Token 时会自动改用 `cloudflared tunnel --config ... run`。
 
@@ -77,6 +79,7 @@ GOARCH_TARGET=arm64 OUT_NAME=armv8 SPK_ARCH="rtd1296 armv8" \
 | `/var/packages/cloudflared/target/bin/cfdctl` | 管理助手 |
 | `/var/packages/cloudflared/var/tunnel-token` | 隧道 Token（权限 600） |
 | `/var/packages/cloudflared/var/config.yml` | 可选配置文件 |
+| `/var/packages/cloudflared/var/accel.json` | 连接加速设置（协议 / IP / HA / PMTU） |
 | `/var/packages/cloudflared/var/cloudflared.log` | 隧道运行日志（状态页展示） |
 | `/var/packages/cloudflared/var/README.txt` | 安装后生成的说明文件 |
 
@@ -89,7 +92,9 @@ synology/
 ├── build-spk.sh              # 一键构建脚本，产出 .spk
 ├── cfdctl/
 │   ├── main.go               # 管理助手：托管隧道进程 + 提供状态/日志接口
-│   └── web/index.html        # 只读状态页（运行状态 + 运行日志）
+│   ├── settings.go           # 加速设置（accel.json）与启动参数
+│   ├── diagnose.go           # 从日志解析协议、边缘连接与回退提示
+│   └── web/index.html        # 状态页（运行状态、诊断、加速、运行日志）
 ├── gen-icons/main.go         # 生成官方 Cloudflare 图标（桌面 + 套件中心）
 ├── scripts/
 │   ├── postinst              # 安装后：写入向导 Token、生成说明文件
@@ -110,6 +115,7 @@ synology/
 - **状态页打不开**：确认套件处于「运行中」，且 `cfdctl` 已在 8321 端口监听
   （日志见 `/var/packages/cloudflared/var/cfdctl.log`）。
 - **隧道未运行**：在状态页查看日志；多为 Token 无效或未填写。
+- **公开域名网页很慢**：看状态页诊断。回退到 HTTP/2 或提示 UDP 被拦时选「稳定优先」；仍走 QUIC 时试强制 IPv4 或禁用 PMTU。Zero Trust 公开主机名的源站请填 NAS 内网地址（如 `http://127.0.0.1:5000`），避免再绕出公网。
 - **安装向导未弹出 Token 输入**：极少数 DSM 版本对 `WIZARD_UIFILES` 支持不一致，
   改用上面的 SSH 方式写入 Token 后 `synopkg restart cloudflared` 即可。
 

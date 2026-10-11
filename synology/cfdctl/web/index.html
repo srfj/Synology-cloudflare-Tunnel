@@ -19,11 +19,23 @@
   .dot.off { background: #dc2626; box-shadow: 0 0 0 4px rgba(220,38,38,.12); }
   .state { font-weight: 600; }
   .meta { margin-top: 10px; color: #6b7280; font-size: 13px; line-height: 1.7; }
+  label { font-size: 13px; color: #374151; display: block; margin: 10px 0 4px; }
+  select, input[type=number] { border: 1px solid #d1d5db; border-radius: 8px; padding: 8px 10px; font-size: 14px; background: #fff; color: inherit; }
+  .presets { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 12px; }
+  .presets button { border: 1px solid #d1d5db; }
+  .presets button.on { background: #1f2328; color: #fff; border-color: #1f2328; }
   button { border: 0; border-radius: 8px; padding: 9px 16px; font-size: 14px; cursor: pointer;
            background: #eef0f3; color: #1f2328; }
+  button.primary { background: #2563eb; color: #fff; }
+  button:disabled { opacity: .55; cursor: default; }
+  .hint { font-size: 13px; line-height: 1.7; color: #374151; margin-top: 8px; }
+  .ok { color: #166534; font-size: 13px; }
+  .err { color: #b91c1c; font-size: 13px; }
   pre { background: #0b1020; color: #d7e0ff; padding: 12px; border-radius: 8px; overflow: auto;
         max-height: 420px; font-size: 12px; line-height: 1.55; margin: 0; white-space: pre-wrap; word-break: break-all; }
   .warn { border-color: #f0c36d !important; background: #fff8e6 !important; color: #8a5a00; font-size: 13px; line-height: 1.7; }
+  .adv { margin-top: 8px; }
+  .adv summary { cursor: pointer; font-size: 13px; color: #6b7280; }
 </style>
 </head>
 <body>
@@ -39,6 +51,34 @@
       <span class="state" id="state">读取中…</span>
     </div>
     <div class="meta" id="meta"></div>
+    <div class="meta" id="diag"></div>
+    <div class="hint" id="hint"></div>
+  </div>
+
+  <div class="card">
+    <strong>连接加速</strong>
+    <div class="hint">公开域名访问慢时，先看上方诊断，再选预设。保存后会重启隧道，约几秒恢复。</div>
+    <div class="presets">
+      <button type="button" data-preset="auto" onclick="setPreset('auto')">自动</button>
+      <button type="button" data-preset="quic" onclick="setPreset('quic')">低延迟（QUIC）</button>
+      <button type="button" data-preset="http2" onclick="setPreset('http2')">稳定优先（HTTP/2）</button>
+    </div>
+    <details class="adv">
+      <summary>高级选项</summary>
+      <label for="ipver">边缘 IP 版本</label>
+      <select id="ipver">
+        <option value="auto">自动</option>
+        <option value="4">仅 IPv4</option>
+        <option value="6">仅 IPv6</option>
+      </select>
+      <label for="ha">HA 连接数（1–8）</label>
+      <input id="ha" type="number" min="1" max="8" value="4">
+      <label><input id="pmtu" type="checkbox"> 禁用 QUIC PMTU 探测</label>
+    </details>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="save" onclick="saveAccel()">保存并重启隧道</button>
+      <span id="saveMsg"></span>
+    </div>
   </div>
 
   <div class="card">
@@ -48,10 +88,6 @@
   </div>
 </div>
 <script>
-// The management page may be served by DSM (port 5000) while the helper listens
-// on 8321, so the API lives on the same host but a fixed port. When the page is
-// opened directly on 8321 the API is same-origin. The 8321 port is therefore
-// used silently by the page and never appears in the address bar.
 function apiBase() {
   var p = location.port || (location.protocol === 'https:' ? '443' : '80');
   if (p === '8321') return location.protocol + '//' + location.host;
@@ -59,6 +95,8 @@ function apiBase() {
 }
 var API = apiBase();
 var warned = false;
+var accelLoaded = false;
+var accel = {preset:'auto', protocol:'auto', edge_ip_version:'auto', ha_connections:4, disable_quic_pmtu:false};
 
 function showWarn(html) {
   var el = document.getElementById('warn');
@@ -67,9 +105,9 @@ function showWarn(html) {
   warned = true;
 }
 
-async function api(path) {
+async function api(path, opt) {
   try {
-    var r = await fetch(API + path);
+    var r = await fetch(API + path, opt || {});
     var t = await r.text();
     try { return JSON.parse(t); } catch (e) { return { error: t }; }
   } catch (e) {
@@ -80,6 +118,28 @@ async function api(path) {
   }
 }
 
+function setPreset(p) {
+  accel.preset = p;
+  document.querySelectorAll('.presets button').forEach(function (b) {
+    b.className = b.getAttribute('data-preset') === p ? 'on' : '';
+  });
+}
+
+function fillAccel(a) {
+  if (!a) return;
+  accel = {
+    preset: a.preset || 'auto',
+    protocol: a.protocol || 'auto',
+    edge_ip_version: a.edge_ip_version || 'auto',
+    ha_connections: a.ha_connections || 4,
+    disable_quic_pmtu: !!a.disable_quic_pmtu
+  };
+  setPreset(accel.preset);
+  document.getElementById('ipver').value = accel.edge_ip_version;
+  document.getElementById('ha').value = accel.ha_connections;
+  document.getElementById('pmtu').checked = accel.disable_quic_pmtu;
+}
+
 function renderStatus(s) {
   if (!s || s.error) return;
   document.getElementById('dot').className = 'dot ' + (s.running ? 'on' : 'off');
@@ -87,6 +147,22 @@ function renderStatus(s) {
   document.getElementById('meta').textContent =
     '模式: ' + s.mode + '   PID: ' + (s.pid || '-') + (s.version ? '   ' + s.version : '');
   document.getElementById('version').textContent = s.version || 'cloudflared';
+  if (!accelLoaded) {
+    fillAccel(s.accel);
+    accelLoaded = true;
+  }
+  var d = s.diagnose || {};
+  var parts = [];
+  if (d.active_protocol) parts.push('实际协议: ' + d.active_protocol);
+  if (d.initial_protocol && d.initial_protocol !== d.active_protocol) parts.push('初始: ' + d.initial_protocol);
+  if (d.fallback) parts.push('已回退');
+  if (d.connections && d.connections.length) {
+    parts.push('边缘连接: ' + d.connections.map(function (c) {
+      return '#' + c.index + ' ' + (c.location || '') + ' ' + (c.protocol || '');
+    }).join(' / '));
+  }
+  document.getElementById('diag').textContent = parts.join('   ');
+  document.getElementById('hint').textContent = d.hint || '';
 }
 
 async function refresh() {
@@ -98,6 +174,42 @@ async function loadLog() {
   var el = document.getElementById('log');
   el.textContent = r.log || '(暂无日志)';
   el.scrollTop = el.scrollHeight;
+}
+
+async function saveAccel() {
+  var btn = document.getElementById('save');
+  var msg = document.getElementById('saveMsg');
+  btn.disabled = true;
+  msg.className = '';
+  msg.textContent = '保存中…';
+  var body = {
+    preset: accel.preset,
+    edge_ip_version: document.getElementById('ipver').value,
+    ha_connections: parseInt(document.getElementById('ha').value, 10) || 4,
+    disable_quic_pmtu: document.getElementById('pmtu').checked
+  };
+  var r = await api('/api/accel', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  });
+  btn.disabled = false;
+  if (r.error && !r.status) {
+    msg.className = 'err';
+    msg.textContent = r.error;
+    return;
+  }
+  if (r.ok === false) {
+    msg.className = 'err';
+    msg.textContent = r.error || '重启失败';
+  } else {
+    msg.className = 'ok';
+    msg.textContent = '已保存并重启';
+  }
+  if (r.status) {
+    accelLoaded = false;
+    renderStatus(r.status);
+  }
 }
 
 (function init() {

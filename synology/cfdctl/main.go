@@ -1,7 +1,8 @@
 // Command cfdctl is a tiny management helper for the cloudflared Synology
 // package. It supervises the cloudflared tunnel process and serves a small
-// web UI that shows the tunnel status and the recent log so the service can be
-// inspected from DSM without an SSH session.
+// web UI that shows the tunnel status, connection diagnostics, acceleration
+// settings, and the recent log so the service can be inspected from DSM
+// without an SSH session.
 //
 // It only uses the Go standard library so it can be cross-compiled statically
 // for old DSM 6.2.4 kernels.
@@ -40,6 +41,7 @@ type supervisor struct {
 	pidPath    string
 	tokenPath  string
 	configPath string
+	accelPath  string
 	selfPID    string
 	version    string
 }
@@ -53,14 +55,15 @@ type supervisor struct {
 // keeps the token out of the process list (ps) and out of the process
 // environment; cloudflared reads and trims the file itself.
 func (s *supervisor) tunnelLaunch() (args, env []string, err error) {
+	base := append([]string{"tunnel", "--no-autoupdate"}, loadAccel(s.accelPath).flags()...)
 	if b, e := os.ReadFile(s.tokenPath); e == nil {
 		if tok := strings.TrimSpace(string(b)); tok != "" {
-			return []string{"tunnel", "--no-autoupdate", "run"},
+			return append(base, "run"),
 				append(os.Environ(), "TUNNEL_TOKEN_FILE="+s.tokenPath), nil
 		}
 	}
 	if fi, e := os.Stat(s.configPath); e == nil && !fi.IsDir() {
-		return []string{"tunnel", "--no-autoupdate", "--config", s.configPath, "run"},
+		return append(base, "--config", s.configPath, "run"),
 			os.Environ(), nil
 	}
 	return nil, nil, fmt.Errorf("尚未配置：请在套件安装时填入 Tunnel Token")
@@ -171,7 +174,9 @@ type status struct {
 	Message    string `json:"message"`
 	// TokenMasked is a fixed placeholder shown when a token is configured; the
 	// real token is never included in any API response.
-	TokenMasked string `json:"token_masked"`
+	TokenMasked string        `json:"token_masked"`
+	Accel       accelSettings `json:"accel"`
+	Diagnose    diagnose      `json:"diagnose"`
 }
 
 func (s *supervisor) status() status {
@@ -183,6 +188,8 @@ func (s *supervisor) status() status {
 		Mode:       mode,
 		Configured: mode != "none",
 		Version:    s.version,
+		Accel:      loadAccel(s.accelPath),
+		Diagnose:   parseDiagnose(s.logTail(2000)),
 	}
 	if mode == "token" {
 		st.TokenMasked = tokenMask
@@ -261,6 +268,7 @@ func main() {
 		pidPath:    filepath.Join(*vardir, "cloudflared.pid"),
 		tokenPath:  filepath.Join(*vardir, "tunnel-token"),
 		configPath: filepath.Join(*vardir, "config.yml"),
+		accelPath:  filepath.Join(*vardir, "accel.json"),
 		selfPID:    filepath.Join(*vardir, "cfdctl.pid"),
 	}
 	_ = os.WriteFile(s.selfPID, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644)
@@ -335,6 +343,29 @@ func main() {
 			writeJSON(w, http.StatusOK, map[string]interface{}{"ok": err == nil, "error": errString(err), "status": s.status()})
 		}
 	}
+	mux.HandleFunc("/api/accel", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
+			return
+		}
+		body, _ := io.ReadAll(io.LimitReader(r.Body, 4096))
+		var in accelSettings
+		if err := json.Unmarshal(body, &in); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "无效的加速设置"})
+			return
+		}
+		in.normalize()
+		if err := in.validate(); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := saveAccel(s.accelPath, in); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		err := s.restart()
+		writeJSON(w, http.StatusOK, map[string]interface{}{"ok": err == nil, "error": errString(err), "status": s.status()})
+	})
 	mux.HandleFunc("/api/start", action(s.start))
 	mux.HandleFunc("/api/stop", action(s.stop))
 	mux.HandleFunc("/api/restart", action(s.restart))

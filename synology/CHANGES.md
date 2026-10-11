@@ -11,6 +11,7 @@
 | `-5` | 图标改为 Cloudflare 官方云标；新增套件中心图标 `PACKAGE_ICON.PNG` / `PACKAGE_ICON_256.PNG` |
 | `-6` | 安装向导必填 Tunnel Token；安装后自动运行；去掉登录鉴权；Token 隐藏（`TUNNEL_TOKEN_FILE` + 掩码） |
 | `-7` | 状态页精简为「运行状态 + 运行日志」，移除启停按钮与 Token 输入栏 |
+| `-8` | 状态页增加连接诊断与加速设置：可切换 auto/QUIC/HTTP2、IPv4/IPv6、HA 连接数、禁用 QUIC PMTU |
 
 ## 经验要点
 
@@ -43,7 +44,12 @@
 - `cfdctl` 只用标准库，避免在 NAS 上引入额外运行时依赖。
 
 ### 6. 升级识别
-- INFO 的 `version` 末尾修订号（如 `-7`）递增，DSM 才会识别为「升级」而非重装。
+- INFO 的 `version` 末尾修订号（如 `-8`）递增，DSM 才会识别为「升级」而非重装。
+
+### 7. 连接加速
+- Token 模式没有本地 config.yml，加速参数必须作为 `cloudflared tunnel` **父命令**标志传入（`--protocol` / `--edge-ip-version` / `--ha-connections` / `--quic-disable-pmtu-discovery`），再跟 `run`。
+- 诊断只看最近一次 `Initial protocol` 之后的日志，避免旧回退记录干扰当前提示。
+- 设置落在 `var/accel.json`，升级套件会保留。
 
 ## 构建
 
